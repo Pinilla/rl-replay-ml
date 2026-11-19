@@ -1,0 +1,22 @@
+[project]
+name = "rl-rank"
+version = "0.1.0"
+description = "Predict a Rocket League player's rank from their movement in replays"
+readme = "README.md"
+authors = [
+    { name = "B. Pinilla" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.5.5",
+    "pandas>=3.1.1",
+    "requests>=2.34.2",
+    "subtr-actor-py>=1.5.1",
+]
+
+[project.scripts]
+rl-rank = "rl_rank:main"
+
+[build-system]
+requires = ["uv_build>=0.13.9,<0.14.0"]
+build-backend = "uv_build"
