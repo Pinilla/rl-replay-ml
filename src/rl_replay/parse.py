@@ -1,6 +1,7 @@
 """Parse downloaded replays into per-frame arrays with player rank labels.
 
-For each replay in data/index.jsonl, writes data/parsed/<id>.npz holding:
+For each replay in <dir>/index.jsonl whose file is in <dir>/raw/, writes
+<dir>/parsed/<id>.npz holding:
 
     frames   float32 (T, 14 + 14 * P) at 10 fps: 12 ball columns, replay time,
              seconds remaining, then 14 columns for each player
@@ -9,12 +10,17 @@ For each replay in data/index.jsonl, writes data/parsed/<id>.npz holding:
              rank_id ("platinum-2", or "")
     goals    int32 (G, 2): frame where the ball enters the net, and scoring team
 
-Rerunning skips replays already parsed.
+Rerunning skips replays already parsed. Replays that fail go in
+<dir>/parse-failures.txt and are skipped on later runs too.
 
-    uv run python -m rl_replay.parse
+    uv run python -m rl_replay.parse                    # data/ (ballchasing)
+    uv run python -m rl_replay.parse --dir data/kaggle  # Kaggle dataset
 """
 
+import argparse
 import json
+import os
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -100,28 +106,53 @@ def parse_one(path: Path, entry: dict) -> dict:
     }
 
 
+def parse_to_file(rid: str, entry: dict, root: Path) -> str | None:
+    """Parse one replay and write its .npz. Returns an error message on failure."""
+    try:
+        result = parse_one(root / "raw" / f"{rid}.replay", entry)
+    except Exception as e:  # a few replays are corrupt or from odd game versions
+        return str(e)
+    out = root / "parsed" / f"{rid}.npz"
+    tmp = out.with_name(out.stem + ".part.npz")
+    np.savez_compressed(tmp, **result)
+    tmp.replace(out)
+    return None
+
+
 def main() -> None:
-    out_dir = DATA / "parsed"
-    out_dir.mkdir(exist_ok=True)
-    done = ok = failed = 0
-    for line in (DATA / "index.jsonl").open():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--dir", type=Path, default=DATA)
+    ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2))
+    args = ap.parse_args()
+    root = args.dir.resolve()
+    (root / "parsed").mkdir(exist_ok=True)
+    failures = root / "parse-failures.txt"
+    known_bad = {l.split()[0] for l in failures.open()} if failures.exists() else set()
+
+    todo, done, missing = [], 0, 0
+    for line in (root / "index.jsonl").open():
         entry = json.loads(line)
         rid = entry["id"]
-        out = out_dir / f"{rid}.npz"
-        if out.exists():
+        if (root / "parsed" / f"{rid}.npz").exists() or rid in known_bad:
             done += 1
-            continue
-        try:
-            result = parse_one(DATA / "raw" / f"{rid}.replay", entry)
-        except Exception as e:  # a few replays are corrupt or from odd game versions
-            failed += 1
-            print(f"skip {rid}: {e}", flush=True)
-            continue
-        tmp = out.with_name(out.stem + ".part.npz")
-        np.savez_compressed(tmp, **result)
-        tmp.replace(out)
-        ok += 1
-    print(f"parsed {ok}, already done {done}, failed {failed}")
+        elif not (root / "raw" / f"{rid}.replay").exists():
+            missing += 1
+        else:
+            todo.append((rid, entry))
+
+    ok = failed = 0
+    with ProcessPoolExecutor(args.workers) as pool, failures.open("a") as bad:
+        results = pool.map(parse_to_file, *zip(*todo), [root] * len(todo), chunksize=16) if todo else []
+        for (rid, _), err in zip(todo, results):
+            if err:
+                failed += 1
+                bad.write(f"{rid} {err}\n")
+                bad.flush()
+            else:
+                ok += 1
+            if (ok + failed) % 1000 == 0:
+                print(f"  {ok + failed}/{len(todo)}", flush=True)
+    print(f"parsed {ok}, failed {failed}, already done {done}, not downloaded yet {missing}")
 
 
 if __name__ == "__main__":
