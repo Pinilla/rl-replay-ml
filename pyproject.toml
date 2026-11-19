@@ -3,6 +3,7 @@ name = "rl-rank"
 version = "0.1.0"
 description = "Predict a Rocket League player's rank from their movement in replays"
 readme = "README.md"
+license = "MIT"
 authors = [
     { name = "B. Pinilla" }
 ]

@@ -12,3 +12,7 @@ echo 'BALLCHASING_TOKEN=your-token' > .env
 ```
 
 Replays and parsed data go in `data/`, which git ignores.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
