@@ -1,5 +1,7 @@
 # Results
 
+All numbers below are from the retrain on 2026-11-19 after overtime was marked correctly (it changed them by under 0.001).
+
 Every model is scored on the same test split (10% of games, chosen by game id) of the Kaggle High-Level 3v3 dataset, 1 million test frames from about 4,000 games, unless noted.
 
 ## Who scores next (blue, orange, nobody)
