@@ -64,6 +64,24 @@ Run each step, check its result, and stop to report if one fails.
    ```
    Then compare `models/mlp/results.json` with the LightGBM survival row in `RESULTS.md`. Don't push to GitHub from the desktop; server1 records results.
 
+## Sequence model
+
+`rl_replay.train_seq` is the same idea as the MLP, but it sees the last 4 s of play (8 moments, 0.5 s apart) instead of one moment. It uses the same data, so nothing new needs copying. Run it from `~/rl-replay-ml` after `git pull`:
+
+1. **Quick test,** a minute or two:
+   ```
+   uv run --extra gpu python -m rl_replay.train_seq --name seq-gputest --shards 2 --max-rows 1000000 --epochs 2
+   ```
+2. **Full run:**
+   ```
+   nohup uv run --extra gpu python -m rl_replay.train_seq --name seq > train-seq.log 2>&1 &
+   ```
+   Each epoch prints `train_secs`. At the end it also scores `models/mlp` on the same test rows, under `mlp_same_rows` in `results.json`.
+3. **Send results to server1:**
+   ```
+   rsync -a models/seq/ train-seq.log pinilla@192.168.4.24:rl-replay-ml/models/seq/
+   ```
+
 ## If something goes wrong
 
 - **`nvidia-smi` not found or no GPU in Ubuntu:** update the Windows NVIDIA driver, then run `wsl --shutdown` in PowerShell and reopen Ubuntu.
@@ -73,3 +91,4 @@ Run each step, check its result, and stop to report if one fails.
   memory=24GB
   ```
 - **CUDA out of memory:** lower `--batch`, or train on part of the data with `--max-rows 15000000`.
+- **Sequence model too slow** (over about 3 minutes per epoch): stop it and rerun with `--steps 6 --width 192`.

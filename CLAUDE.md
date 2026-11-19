@@ -20,7 +20,8 @@ Two projects share the code:
 | `src/rl_replay/parse.py` | Replays to per-frame arrays, goal detection |
 | `src/rl_replay/frames.py` | Training examples: 134 inputs per moment, labels, `mirror()` for orange's view |
 | `src/rl_replay/baseline.py`, `horizon.py` | LightGBM baselines |
-| `src/rl_replay/train_nn.py` | PyTorch survival model |
+| `src/rl_replay/train_nn.py` | PyTorch survival model on one moment (MLP) |
+| `src/rl_replay/train_seq.py` | PyTorch survival model on the last 4 s of play (GRU) |
 | `RESULTS.md` | Every model's scores on the same test games. Add a row for each new model |
 | `data/`, `models/` | Not in git |
 
