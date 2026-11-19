@@ -3,7 +3,7 @@
 Same examples, labels and test games as the LightGBM survival baseline
 (rl_replay.horizon), so the scores compare directly against RESULTS.md.
 
-Model: 133 inputs -> 3 hidden layers of 256 (GELU) -> 31 outputs, softmax.
+Model: 134 inputs -> 3 hidden layers of 256 (GELU) -> 31 outputs, softmax.
 Outputs: blue scores in each 2 s slice up to 30 s (15), orange the same (15),
 no goal within 30 s (1).
 
