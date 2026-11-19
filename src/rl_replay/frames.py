@@ -90,7 +90,9 @@ def live_segments(ball: np.ndarray, cars: np.ndarray, present: np.ndarray,
 
     segs = []
     for i, r in enumerate(resets):
-        go = r + np.argmax(moving[r:]) if moving[r:].any() else n
+        if not moving[r:].any():
+            break  # the replay ends before anyone moves
+        go = r + np.argmax(moving[r:])
         nxt = [n]
         if i + 1 < len(resets):
             nxt.append(resets[i + 1])
