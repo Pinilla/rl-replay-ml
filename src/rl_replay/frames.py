@@ -9,6 +9,10 @@ end of the countdown, so the kickoff approach counts) until the next goal or
 reset. The goal celebration and the countdown are dropped. In a game that
 ends at 0:00, play ends when the ball first touches the ground.
 
+In overtime the replay's "seconds remaining" counts up from 0, so the
+examples carry an overtime flag, seconds remaining 0, and seconds into
+overtime. A live stretch is overtime if it starts with the clock at 0.
+
 Cars are ordered blue then orange, and within a team by distance to the
 ball, so slot 0 is always blue's closest player to the ball. A demolished car
 has zeros and present = 0.
@@ -36,7 +40,7 @@ MOVE_SPEED = 10.0  # a car faster than this has left its spawn spot
 GLOBAL_COLS = [
     "ball_x", "ball_y", "ball_z", "ball_vx", "ball_vy", "ball_vz",
     "ball_avx", "ball_avy", "ball_avz",
-    "secs_left", "clock_zero", "score_diff", "secs_since_kickoff",
+    "secs_left", "overtime", "overtime_secs", "score_diff", "secs_since_kickoff",
 ]
 CAR_FIELDS = [
     "x", "y", "z", "vx", "vy", "vz", "fx", "fy", "fz", "ux", "uy", "uz",
@@ -132,12 +136,13 @@ def game_examples(path: Path, every: int) -> dict | None:
     # Pick every `every`-th live frame, with a per-game offset so frames don't
     # always line up with the kickoff.
     rng = np.random.default_rng(int(hashlib.sha1(path.stem.encode()).hexdigest()[:8], 16))
-    idx, since = [], []
+    idx, since, ot = [], [], []
     for go, end in segs:
         f = np.arange(go + rng.integers(every), end, every)
         idx.append(f)
         since.append((f - go) / FPS)
-    idx, since = np.concatenate(idx), np.concatenate(since)
+        ot.append(np.full(len(f), secs_left[go] == 0))
+    idx, since, ot = np.concatenate(idx), np.concatenate(since), np.concatenate(ot)
 
     # Label and time to the next goal, from the full goal list.
     gf = goals[:, 0] if len(goals) else np.array([n])
@@ -167,8 +172,8 @@ def game_examples(path: Path, every: int) -> dict | None:
     car = np.take_along_axis(car, order[:, :, None], axis=1)
 
     glob = np.column_stack([
-        b[:, 0:3], b[:, 6:9], b[:, 9:12], secs_left[idx], (secs_left[idx] == 0).astype(np.float32),
-        score_diff, since,
+        b[:, 0:3], b[:, 6:9], b[:, 9:12], np.where(ot, 0.0, secs_left[idx]), ot.astype(np.float32),
+        np.where(ot, secs_left[idx], 0.0), score_diff, since,
     ])
     X = np.concatenate([glob, car.reshape(len(idx), -1)], axis=1).astype(np.float32)
     return {"X": X, "y": y, "frame": idx.astype(np.int32), "secs_to_goal": secs_to_goal}
