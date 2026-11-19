@@ -35,26 +35,40 @@ N_GLOBAL, N_PLAYER = 14, 14
 # Field geometry in Unreal units. The goal line is at |y| = 5120; the ball
 # (radius about 93) counts as inside once its center is well past it.
 GOAL_Y, POST_X, CROSSBAR_Z = 5150, 900, 650
-# After a goal the ball stays in the net for about 3 seconds before the reset.
-# A ball that pokes past the line and comes back out (a save) is shorter.
-MIN_GOAL_FRAMES = 10
+# Stretches in the goal zone this close together are one goal; the ball can
+# leave the zone for a moment during the goal explosion.
+MERGE_GAP = 10
+# After a goal the ball resets to the exact center of the field for kickoff.
+# After a save it doesn't. Look this many frames past the stretch for the reset.
+RESET_WINDOW = 100
 
 
 def find_goals(frames: np.ndarray) -> np.ndarray:
-    """First frame of each stretch of at least MIN_GOAL_FRAMES with the ball inside a goal.
+    """Frame where the ball enters the net for each goal, and the scoring team.
 
     The replay header's goal frames count network frames that don't map
-    evenly onto replay time, so we find goals from the ball position instead.
-    The ball entering the goal at y < 0 is a goal for orange (team 1),
-    whoever touched it last, so own goals come out right.
+    evenly onto replay time, so we find goals from the ball position instead:
+    a stretch with the ball inside a goal, followed by the kickoff reset to
+    (0, 0), or by the end of the replay. The ball entering the goal at y < 0
+    is a goal for orange (team 1), whoever touched it last, so own goals come
+    out right.
     """
     x, y, z = frames[:, 0], frames[:, 1], frames[:, 2]
     inside = (np.abs(y) > GOAL_Y) & (np.abs(x) < POST_X) & (z < CROSSBAR_Z)
     edges = np.diff(np.concatenate(([0], inside.astype(np.int8), [0])))
-    starts, ends = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
-    goals = [(s, 1 if y[s] < 0 else 0)
-             for s, e in zip(starts, ends)
-             if e - s >= MIN_GOAL_FRAMES or e == len(frames)]
+    runs = list(zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)))
+    merged = []
+    for s, e in runs:
+        if merged and s - merged[-1][1] <= MERGE_GAP and np.sign(y[s]) == np.sign(y[merged[-1][0]]):
+            merged[-1] = (merged[-1][0], e)
+        else:
+            merged.append((s, e))
+    centered = (x == 0) & (y == 0)
+    goals = []
+    for s, e in merged:
+        after = centered[e:e + RESET_WINDOW]
+        if after.any() or e >= len(frames) - 5:
+            goals.append((s, 1 if y[s] < 0 else 0))
     return np.array(goals, dtype=np.int32).reshape(-1, 2)
 
 
