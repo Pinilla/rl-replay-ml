@@ -1,7 +1,7 @@
 [project]
-name = "rl-rank"
+name = "rl-replay-ml"
 version = "0.1.0"
-description = "Predict a Rocket League player's rank from their movement in replays"
+description = "Machine learning on Rocket League replays: rank prediction and next-goal probability"
 readme = "README.md"
 license = "MIT"
 authors = [
@@ -16,8 +16,11 @@ dependencies = [
 ]
 
 [project.scripts]
-rl-rank = "rl_rank:main"
+rl-replay-ml = "rl_replay:main"
 
 [build-system]
 requires = ["uv_build>=0.13.9,<0.14.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "rl_replay"

@@ -1,22 +1,30 @@
-"""Download ranked 3v3 replays from ballchasing.com, balanced across rank bands.
+"""Download ranked 3v3 replays from ballchasing.com, rotating through rank bands.
 
 Each replay goes to data/raw/<id>.replay, and its ballchasing listing entry
-(which holds each player's rank) is appended to data/index.jsonl. Rerunning
-skips replays already on disk, so an interrupted run picks up where it stopped.
+(which holds each player's rank) is appended to data/index.jsonl. Already
+downloaded replays are skipped, so every run adds new ones.
 
-    uv run python -m rl_rank.download --per-band 500
+Free accounts may download 50 replays uploaded by other people per UTC day.
+The script takes one replay from each band in turn, so the bands stay
+balanced however many replays a day allows. It stops when it reaches --max,
+when every band has --per-band replays, or when ballchasing keeps refusing
+downloads (the daily limit).
+
+    uv run python -m rl_replay.download --max 50
 """
 
 import argparse
 import json
 import os
 import time
+from collections import Counter
 from pathlib import Path
 
 import requests
 
 API = "https://ballchasing.com/api"
-DATA = Path(__file__).resolve().parents[2] / "data"
+ROOT = Path(__file__).resolve().parents[2]
+DATA = ROOT / "data"
 
 # Every replay in a band has all of its ranked players inside that band.
 BANDS = {
@@ -30,12 +38,16 @@ BANDS = {
     "supersonic-legend": ("supersonic-legend", "supersonic-legend"),
 }
 
-MIN_GAP = 0.6  # seconds between API calls
+MIN_GAP = 1.0  # seconds between API calls; downloads allow 1 per second
+MAX_BACKOFF = 64  # give up on a request after waiting this long
+
+
+class RateLimited(Exception):
+    pass
 
 
 def load_token() -> str:
-    env = Path(__file__).resolve().parents[2] / ".env"
-    for line in env.read_text().splitlines():
+    for line in (ROOT / ".env").read_text().splitlines():
         if line.startswith("BALLCHASING_TOKEN="):
             return line.split("=", 1)[1].strip()
     raise SystemExit("BALLCHASING_TOKEN missing from .env")
@@ -48,8 +60,8 @@ class Client:
         self.last_call = 0.0
 
     def get(self, url: str, **kwargs) -> requests.Response:
-        # Ballchasing sends no rate-limit headers and sometimes "Retry-After: 0",
-        # so back off on our own: 2s, 4s, 8s, ... up to 5 minutes.
+        # Back off 2s, 4s, ... 64s on "too many requests", then give up.
+        # Short limits clear within that; the daily download limit doesn't.
         backoff = 2
         while True:
             wait = MIN_GAP - (time.monotonic() - self.last_call)
@@ -57,13 +69,13 @@ class Client:
                 time.sleep(wait)
             self.last_call = time.monotonic()
             resp = self.session.get(url, timeout=60, **kwargs)
-            if resp.status_code == 429:
-                print(f"  rate limited, waiting {backoff}s", flush=True)
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 300)
-                continue
-            resp.raise_for_status()
-            return resp
+            if resp.status_code != 429:
+                resp.raise_for_status()
+                return resp
+            if backoff > MAX_BACKOFF:
+                raise RateLimited(url)
+            time.sleep(backoff)
+            backoff *= 2
 
 
 def list_band(client: Client, lo: str, hi: str, after: str | None):
@@ -87,37 +99,41 @@ def list_band(client: Client, lo: str, hi: str, after: str | None):
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--per-band", type=int, default=500)
+    ap.add_argument("--max", type=int, default=50, help="replays to download this run")
+    ap.add_argument("--per-band", type=int, default=500, help="stop filling a band at this many")
     ap.add_argument("--after", default="2025-06-01T00:00:00Z",
                     help="only replays played after this date (RFC 3339)")
-    ap.add_argument("--bands", nargs="*", default=list(BANDS))
     args = ap.parse_args()
 
     raw = DATA / "raw"
     raw.mkdir(parents=True, exist_ok=True)
     index_path = DATA / "index.jsonl"
-    indexed = set()
-    if index_path.exists():
-        indexed = {json.loads(l)["id"] for l in index_path.open()}
+    entries = [json.loads(l) for l in index_path.open()] if index_path.exists() else []
+    indexed = {e["id"] for e in entries}
+    counts = Counter(e["band"] for e in entries)
 
     client = Client(load_token())
+    listings = {b: list_band(client, lo, hi, args.after) for b, (lo, hi) in BANDS.items()}
+    open_bands = [b for b in BANDS if counts[b] < args.per_band]
+    got = 0
     with index_path.open("a") as index:
-        for band in args.bands:
-            lo, hi = BANDS[band]
-            have = sum(1 for l in index_path.open() if json.loads(l)["band"] == band)
-            print(f"{band}: {have} already downloaded", flush=True)
-            for entry in list_band(client, lo, hi, args.after):
-                if have >= args.per_band:
-                    break
-                rid = entry["id"]
-                if rid in indexed:
+        try:
+            while open_bands and got < args.max:
+                # Fill the band with the fewest replays first.
+                band = min(open_bands, key=lambda b: counts[b])
+                entry = next((e for e in listings[band] if e["id"] not in indexed), None)
+                if entry is None:
+                    print(f"{band}: no more replays to list", flush=True)
+                    open_bands.remove(band)
                     continue
-                path = raw / f"{rid}.replay"
+                rid = entry["id"]
                 try:
                     data = client.get(f"{API}/replays/{rid}/file").content
                 except requests.HTTPError as e:
-                    print(f"  skip {rid}: {e}", flush=True)
+                    print(f"skip {rid}: {e}", flush=True)
+                    indexed.add(rid)
                     continue
+                path = raw / f"{rid}.replay"
                 tmp = path.with_suffix(".part")
                 tmp.write_bytes(data)
                 os.replace(tmp, path)
@@ -125,10 +141,14 @@ def main() -> None:
                 index.write(json.dumps(entry) + "\n")
                 index.flush()
                 indexed.add(rid)
-                have += 1
-                if have % 25 == 0:
-                    print(f"  {band}: {have}/{args.per_band}", flush=True)
-            print(f"{band}: done with {have}", flush=True)
+                counts[band] += 1
+                got += 1
+                if counts[band] >= args.per_band:
+                    open_bands.remove(band)
+        except RateLimited:
+            print("ballchasing keeps refusing requests; daily limit reached", flush=True)
+
+    print(f"downloaded {got}; totals: " + ", ".join(f"{b} {counts[b]}" for b in BANDS), flush=True)
 
 
 if __name__ == "__main__":
