@@ -26,3 +26,7 @@ uv run python -m rl_replay.parse               # replays to per-frame arrays in 
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Training the neural net
+
+See [DESKTOP.md](DESKTOP.md) for training on a Windows PC with an NVIDIA GPU through WSL2. Scores for every model are in [RESULTS.md](RESULTS.md).
