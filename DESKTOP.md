@@ -64,6 +64,48 @@ Run each step, check its result, and stop to report if one fails.
    ```
    Then compare `models/mlp/results.json` with the LightGBM survival row in `RESULTS.md`. Don't push to GitHub from the desktop; server1 records results.
 
+## Part C: let server1 run training over SSH
+
+After this, Claude on server1 starts runs on the desktop and fetches the results itself, so the owner doesn't have to switch machines. It needs SSH into Ubuntu on the desktop (192.168.4.160) on port 2222. Only server1 may connect, and only with server1's key `server1-to-desktop`.
+
+Claude Code on the desktop does steps 1 to 4, then the owner does step 5.
+
+1. **SSH server in Ubuntu.** Ask the owner before using sudo.
+   ```
+   sudo apt install -y openssh-server
+   printf 'Port 2222\nPasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\nAllowUsers %s\n' "$USER" | sudo tee /etc/ssh/sshd_config.d/10-server1.conf
+   sudo systemctl enable --now ssh
+   ```
+   Ubuntu 24.04 may start SSH through `ssh.socket`, which ignores the `Port` line. If `ss -tlnp | grep 2222` shows nothing, run `sudo systemctl disable --now ssh.socket && sudo systemctl restart ssh`.
+2. **server1's key.** Add this line to `~/.ssh/authorized_keys` (create it with mode 600 if missing):
+   ```
+   from="192.168.4.24" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIcrHz7ZwWyQlODpUWhNw4go3JXpLCslh9cqcjApvlq1 server1-to-desktop
+   ```
+   The `from=` part refuses the key from any other address.
+3. **WSL settings.** Edit `C:\Users\bpini\.wslconfig` (from Ubuntu: `/mnt/c/Users/bpini/.wslconfig`). Keep any lines already there and make sure the `[wsl2]` section has:
+   ```
+   [wsl2]
+   networkingMode=mirrored
+   vmIdleTimeout=-1
+   ```
+   Mirrored networking puts Ubuntu on the PC's own address, 192.168.4.160, so server1 can reach it. `vmIdleTimeout=-1` stops WSL from shutting down when no Ubuntu window is open.
+4. **Report** the output of `whoami` to the owner. Claude on server1 needs this username.
+5. **The owner, in PowerShell as administrator,** allows port 2222 from server1 only, then restarts WSL. This closes the Ubuntu window and Claude Code in it:
+   ```
+   New-NetFirewallHyperVRule -Name WSL-SSH-server1 -DisplayName "WSL SSH from server1" -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 2222 -RemoteAddresses 192.168.4.24 -Action Allow
+   New-NetFirewallRule -DisplayName "WSL SSH from server1" -Direction Inbound -Protocol TCP -LocalPort 2222 -RemoteAddress 192.168.4.24 -Action Allow
+   wsl --shutdown
+   ```
+   Then open Ubuntu once, so WSL starts, and tell Claude on server1 the username from step 4.
+
+For this to keep working:
+
+- **WSL has to be running.** If server1 can't connect after a reboot, open Ubuntu once. If it stops again on its own, the fix is a Task Scheduler task that runs `wsl.exe -d Ubuntu-24.04 --exec sleep infinity` at logon.
+- **The PC can't be asleep.** If Windows sleeps after a set time, a run started from server1 pauses until someone wakes the PC.
+- **The address has to stay 192.168.4.160.** If the router hands out a new one, reserve 192.168.4.160 for the desktop in the router, or tell Claude on server1 the new address.
+
+To undo all of this: `sudo apt remove openssh-server` in Ubuntu, remove the `server1-to-desktop` line from `~/.ssh/authorized_keys`, and in admin PowerShell run `Remove-NetFirewallHyperVRule -Name WSL-SSH-server1` and `Remove-NetFirewallRule -DisplayName "WSL SSH from server1"`.
+
 ## Sequence model
 
 `rl_replay.train_seq` is the same idea as the MLP, but it sees the last 4 s of play (8 moments, 0.5 s apart) instead of one moment. It uses the same data, so nothing new needs copying. Run it from `~/rl-replay-ml` after `git pull`:
