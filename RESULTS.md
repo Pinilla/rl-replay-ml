@@ -26,6 +26,7 @@ The field adds little because most frames are far from the next goal. Picking th
 | LightGBM value regression | 4M | 0.0348 | 0.475 | 0.971 | 0.864 | 0.717 | 0.632 |
 | LightGBM survival, 2 s slices to 30 s | 2M | 0.0360 | 0.438 | 0.976 | 0.867 | 0.721 | 0.637 |
 | Neural net (MLP 3 x 256, 174,111 weights), survival | 23.4M | 0.0311 | 0.551 | 0.991 | 0.906 | 0.754 | 0.657 |
+| Sequence net (GRU 2 x 256 over last 4 s, 963,615 weights), survival | 23.4M | 0.0335 | 0.500 | 0.985 | 0.891 | 0.740 | 0.649 |
 
 The survival model stopped after 39 rounds and is underconfident at low probabilities (it says 3.1% where 4.5% happens), so it is undertrained. Top inputs are now ball position and velocity, not the clock.
 
@@ -34,3 +35,17 @@ The neural net trained on the desktop RTX 3090 in 5.6 minutes: 30 epochs of abou
 It is well calibrated. For "blue scores within 5 s" it says 3.2% where 5.0% happens, 13.9% where 16.0% happens, and 90.8% where 90.6% happens. LightGBM said 13.7% where 18.2% happened.
 
 Two caveats. It saw 12 times as many training rows as the LightGBM survival model, so part of the gain is data, not the model type. The validation score was still improving slightly when the 30 epochs ran out.
+
+The sequence net (2026-11-19, `models/seq`, 12 minutes on the 3090, about 59 s per epoch) did worse than the MLP. Both were scored on all 2.87M test rows. Its validation score was best after epoch 6 of 30 and then got worse, so early stopping ended the run at epoch 10 while the learning rate was still high. Test log loss was 1.621 for the sequence net and 1.600 for the MLP.
+
+## How often the top guess gets the timing right
+
+All 2.87M test rows. "No goal within 30 s" is the right answer for 67.0% of frames, so always guessing it is 67.0% right. The MLP's top pick is right 68.2% of the time and the sequence net's 67.8%. For frames where a goal does come within 30 s, the table shows how often the top goal slice has the right team and the right 2-second slice, or a slice within one of it.
+
+| Actual time to goal | Share of frames | MLP exact | MLP within one | Sequence exact | Sequence within one |
+|---|---|---|---|---|---|
+| Under 2 s | 2.4% | 89.4% | 98.5% | 85.1% | 97.7% |
+| 2 to 5 s | 3.8% | 55.4% | 84.3% | 50.5% | 80.2% |
+| 5 to 10 s | 6.2% | 15.5% | 39.4% | 13.8% | 36.7% |
+| 10 to 20 s | 11.1% | 1.5% | 4.5% | 2.0% | 5.1% |
+| 20 to 30 s | 9.4% | 0.0% | 0.1% | 0.0% | 0.1% |
